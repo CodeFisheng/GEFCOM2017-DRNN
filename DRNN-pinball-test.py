@@ -11,7 +11,6 @@ import csv
 import math
 import time
 import matplotlib.pyplot as pl
-
 class County:
     def __init__(self,parsename):
         self.parsename = parsename
@@ -25,7 +24,7 @@ class County:
         print self.dataframe
     def get_all(self):
         return self.dataframe
-
+    
 xls = pd.ExcelFile('smd_hourly.xls')
 INC = County('ISO NE CA')
 ME = County('ME')
@@ -41,14 +40,15 @@ data_dir = './data/' # directory contains input data
 num_epoches = 50000 # training epoches for each customer samples
 day_steps = 24
 n_steps = day_steps # input size
-test_batch_size = 4*7*day_steps # days of a batch
+test_batch_size = 2*day_steps # days of a batch
 validation_batch_size = 0*day_steps
-train_batch_size = 7*day_steps
+train_batch_size = 2*day_steps
 feature_size = 1 # same time of a week
-n_hidden = 10 # input size
-num_layers = 1
+n_hidden = 30 # input size
+num_layers = 3
 n_output = 1
 totalen = np.array(INC.demand).shape[0]
+tao = 0.1
 
 # DEMAND MATRIX 9 X LENGTH, 9: INC is total, index with 0, other substations are from 1 -> 8
 tmp = np.array(INC.demand)
@@ -102,10 +102,10 @@ valid_id = np.array(validation_batch_size)
 train_id = np.array(totalen-test_batch_size-validation_batch_size-n_steps)
 
 #give values to id arrays
-rang = range(n_steps,totalen-test_batch_size)
+rang = range(n_steps + decay,totalen-test_batch_size)
 valid_id = rd.sample(rang,validation_batch_size)
 test_id = np.array(range(totalen-test_batch_size,totalen))
-train_id = set(range(n_steps,totalen-test_batch_size))-set(valid_id)
+train_id = set(range(n_steps + decay,totalen-test_batch_size))-set(valid_id)
 
 #sort three id array
 valid_id = np.sort(valid_id)
@@ -116,38 +116,35 @@ def train_data_gen():
     X = np.zeros((train_batch_size,n_steps,feature_size))
     Y = np.zeros((train_batch_size,feature_size))
     count = 0
-    rang = range(n_steps,train_id.shape[0])
+    rang = range(n_steps + decay,train_id.shape[0])
     train_rd = rd.sample(rang,train_batch_size)
     train_rd = np.sort(train_rd)
     for i in train_rd:
         Y[count] = db[:,i,:]
-        X[count] = db[:,i-n_steps:i,:]
+        X[count] = db[:,i-n_steps-decay:i-decay,:]
         count = count + 1
     return (X,Y)
-
 def valid_data_gen():
     X = np.zeros((train_batch_size,n_steps,feature_size))
     Y = np.zeros((train_batch_size,feature_size))
     count = 0
-    rang = range(n_steps,valid_id.shape[0])
+    rang = range(n_steps + decay,valid_id.shape[0])
     valid_rd = rd.sample(rang,train_batch_size)
     valid_rd = np.sort(valid_rd)
     for i in valid_rd:
         Y[count] = db[:,i,:]
-        X[count] = db[:,i-n_steps:i,:]
+        X[count] = db[:,i-n_steps-decay:i-decay,:]
         count = count + 1
     return (X,Y)
-
 def test_data_gen():
     X = np.zeros((test_batch_size,n_steps,feature_size))
     Y = np.zeros((test_batch_size,feature_size))
     count = 0
     for i in test_id:
         Y[count] = db[:,i,:]
-        X[count] = db[:,i-n_steps:i,:]
+        X[count] = db[:,i-n_steps-decay:i-decay,:]
         count = count + 1
     return (X,Y)
-
 # create placeholder for x and y
 #with tf.device('/gpu:0'):
 x = tf.placeholder("float",[None,n_steps,feature_size])
@@ -187,33 +184,31 @@ def RNN(_X, _istate, _weights, _biases):
     return tf.matmul(outputs[-1], _weights['out']) + _biases['out']
 
 pred = RNN(x, istate, weights, biases)
+tmp = tf.Variable("float")
+L = tf.Variable(initial_value = 0.0)
 #cost function 
 cost = tf.reduce_mean(tf.pow(pred[:,0]-y[:,0],2)) # cost function of this batch of data
+for i in range(test_batch_size):
+    tmp = tf.cond(pred[i,0]-y[i,0]>=0, lambda: (pred[i,0]-y[i,0])*tao,lambda:(y[i,0]-pred[i,0])*(1-tao))
+    L = tf.add(tmp,L)
 #compute parameter updates
 #optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(cost)
-optimizer = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
-
+optimizer = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(L)
 def maxe(predictions, targets):
     return max(abs(predictions-targets))
-
 def rmse(predictions, targets):
     return np.sqrt(((predictions - targets) ** 2).mean())
-
 def mape(predictions, targets):
     return np.mean(abs(predictions-targets)/targets)
-
 outlist = np.zeros([(num_epoches/10),test_batch_size])
 kind = 0
 time1 = time.time()
 # generate test data
 test_x,test_y = test_data_gen()
 test_x = test_x.reshape(test_batch_size,n_steps,feature_size)
-print test_x
-print test_y
 ### Execute
 # Initializing the variables
 init = tf.initialize_all_variables()
-
 with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
     # Create a summary to monitor cost function
     #tf.scalar_summary("loss", cost)
@@ -256,19 +251,13 @@ with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
             #print outp_test[0:3]
             outlist[kind,:] = outp_test.copy().T
             kind = kind + 1
-        #    print ktmp
-        #if k % 10 == 0:
-        #    output_tmp_ex = sess.run(pred,feed_dict = {x:test_x,y:test_y,istate:np.zeros((test_batch_size,num_layers*2*n_hidden))} )
-        #    print "Iter " + str(k) + ", Minibatch Loss ---- Train = " + "{:.6f}".format(cost) # + "; Test = " + "{:.6f}".format(loss2)
-    #print "haha{}".format(outp)
-        #    ktmp = np.corrcoef(output_tmp_ex.T,test_y.T)[0,1]
-        #    accuracy1.append(ktmp)
-        #    print ktmp
-
+        
 RList = np.zeros([(num_epoches/10)])
 rmseList = np.zeros([(num_epoches/10)])
 maxeList = np.zeros([(num_epoches/10)])
 mapeList = np.zeros([(num_epoches/10)])
+out = out * 25000
+test_y = test_y*25000
 for i in range(kind):
     out = np.array(outlist[i])
     tmp = out.T.reshape((1,test_batch_size))
@@ -276,15 +265,16 @@ for i in range(kind):
     rmseList[i] = rmse(tmp[0,:],test_y.T[0,:])
     maxeList[i] = maxe(tmp[0,:],test_y.T[0,:])
     mapeList[i] = mape(tmp[0,:],test_y.T[0,:])
+prefix = './pinball-test/'
+postfix = '-tao:' + str(tao) + '.csv'
+DataFrame(RList).to_csv(prefix + 'R' + postfix)
+DataFrame(rmseList).to_csv(prefix + 'RMSE' + postfix)
+DataFrame(maxeList).to_csv(prefix + 'MAXE' + postfix)
+DataFrame(mapeList).to_csv(prefix + 'MAPE' + postfix)
+out = out.reshape((test_batch_size,1))
+pred_nd_load = np.concatenate([test_y,out],axis = 1)
+DataFrame(pred_nd_load).to_csv(prefix + 'pred_nd_load' + postfix)
 
-prefix = './gefcom-result/INC'
-postfix = '-' + str(num_layers) + '-' + str(n_hidden) + '.csv'
-#DataFrame(RList).to_csv(prefix + 'R' + postfix)
-#DataFrame(rmseList).to_csv(prefix + 'RMSE' + postfix)
-#DataFrame(maxeList).to_csv(prefix + 'MAXE' + postfix)
-#DataFrame(mapeList).to_csv(prefix + 'MAPE' + postfix)
-DataFrame(out).to_csv(prefix + 'out3.csv')
-DataFrame(test_y).to_csv(prefix + 'test3.csv')
+print np.mean(mapeList[-1001:-1])
 time2 = time.time()
 print time2-time1
-
