@@ -39,7 +39,7 @@ WCMA = County('WCMA')
 NEMA = County('NEMA')
 
 data_dir = './data/' # directory contains input data
-num_epoches = 100# training epoches for each customer samples
+num_epoches = 50000# training epoches for each customer samples
 input_seq_size = 7*24 # input size
 test_batch_size = 7 # days of a batch
 valid_batch_size = 14
@@ -47,7 +47,7 @@ train_batch_size = 7
 data_dim = 1 # same time of a week
 output_seq_size = 24
 totalen = np.array(INC.demand).shape[0]/output_seq_size
-n_hidden = 1 # input size
+n_hidden = 30 # input size
 num_layers = 3
 
 # DEMAND MATRIX 9 X LENGTH, 9: INC is total, index with 0, other substations are from 1 -> 8
@@ -253,12 +253,10 @@ with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
         if k%10==0:
             print "Iter " + str(k) + ", Minibatch Loss ---- Train = " + str(err)
             err_test = sess.run(cost, feed_dict=dict(tex_list.items() + tey_list.items()))
-            
+            costs_test.append(err_test)
 time2 = time.time()
 print time2-time1
 costlist = np.array(costs)
-costlist_te = np.array(costs)
-costlist = costlist.reshape((costlist.shape[0],1))
-costlist_te = costlist_te.reshape((costlist.shape[0],1))
-pred_nd_load = np.concatenate([costlist,costlist_te],axis = 1)
-DataFrame(pred_nd_load).to_csv('seq2seq/costfile.csv')
+costlist_te = np.array(costs_test)
+DataFrame(costlist).to_csv('seq2seq/costfile_train.csv')
+DataFrame(costlist_te).to_csv('seq2seq/costfile_test.csv')
