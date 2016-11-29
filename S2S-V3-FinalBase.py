@@ -39,16 +39,16 @@ WCMA = County('WCMA')
 NEMA = County('NEMA')
 
 data_dir = './data/' # directory contains input data
-num_epoches = 500# training epoches for each customer samples
+num_epoches = 20000# training epoches for each customer samples
 input_seq_size = 7*24 # input size
-test_batch_size = 1 # days of a batch
+test_batch_size = 3 # days of a batch
 valid_batch_size = 14
-train_batch_size = 1
+train_batch_size = 3
 data_dim = 1 # same time of a week
 output_seq_size = 24
 totalen = np.array(INC.demand).shape[0]/output_seq_size
-n_hidden = 1 # input size
-num_layers = 3
+n_hidden = 5 # input size
+num_layers = 2
 
 # DEMAND MATRIX 9 X LENGTH, 9: INC is total, index with 0, other substations are from 1 -> 8
 tmp = np.array(INC.demand, dtype = np.float32)
@@ -198,7 +198,7 @@ variable_summaries(cost, 'cost')
 optimizer = tf.train.AdamOptimizer(0.001, 0.8, 0.7).minimize(cost)
 
 def maxe(predictions, targets):
-    return max(abs(predictions-targets))
+    return np.max(abs(predictions-targets))
 
 def rmse(predictions, targets):
     return np.sqrt(((predictions - targets) ** 2).mean())
@@ -266,7 +266,7 @@ DataFrame(costlist).to_csv(prefix + 'costfile_train.csv')
 DataFrame(costlist_te).to_csv(prefix + 'costfile_test.csv')
 outlist = outlist * 25000
 actuaload = np.reshape(test_y, [-1])
-actuaload = actuaload.T
+actuaload = (actuaload*25000).T
 prediction = np.array(outlist[-1,:])
 DataFrame(actuaload).to_csv(prefix + 'actual_load.csv')
 DataFrame(prediction).to_csv(prefix + 'prediction.csv')
@@ -275,6 +275,7 @@ RList = np.zeros([(num_epoches/10)])
 rmseList = np.zeros([(num_epoches/10)])
 maxeList = np.zeros([(num_epoches/10)])
 mapeList = np.zeros([(num_epoches/10)])
+actuaload = actuaload.reshape((1,test_batch_size*output_seq_size))
 for i in range(kind):
     out = np.array(outlist[i])
     tmp = out.T.reshape((1,test_batch_size*output_seq_size))
@@ -286,3 +287,5 @@ DataFrame(RList).to_csv(prefix + 'R.csv')
 DataFrame(rmseList).to_csv(prefix + 'RMSE.csv')
 DataFrame(maxeList).to_csv(prefix + 'MAXE.csv')
 DataFrame(mapeList).to_csv(prefix + 'MAPE.csv')
+plt.plot(costs)
+plt.show()
